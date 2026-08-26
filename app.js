@@ -243,50 +243,57 @@ document
 
 async function showApplication() {
 
-    document
-        .getElementById("loginPage")
-        .classList.add("hidden");
-
-
-    document
-        .getElementById("appPage")
-        .classList.remove("hidden");
-
+    // Show dashboard immediately after successful login
+    document.getElementById("loginPage").classList.add("hidden");
+    document.getElementById("appPage").classList.remove("hidden");
 
     try {
+        // Load the logged-in farmer's profile
+        farmer = await api("/farmer/profile");
 
-        farmer =
-            await api(
-                "/farmer/profile"
-            );
+        document.getElementById("farmerName").textContent = farmer.name;
 
-
-        document.getElementById(
-            "farmerName"
-        ).textContent =
-            farmer.name;
-
-
-        document.querySelector(
-            "#dashboard h1"
-        ).textContent =
+        document.querySelector("#dashboard h1").textContent =
             `Welcome, ${farmer.name}`;
-
-
-        await loadSchedules();
-
-        await loadTokens();
-
-        await loadPayments();
-
-        await loadNotifications();
 
     } catch (error) {
 
-        logout();
+        // Only return to login if authentication really fails
+        console.error("Profile loading error:", error);
 
+        alert(
+            "Login succeeded, but some profile data could not load. " +
+            "Please refresh the page."
+        );
+
+        return;
     }
 
+    // Load other dashboard information separately.
+    // If one fails, the user remains logged in.
+    try {
+        await loadSchedules();
+    } catch (error) {
+        console.error("Schedule error:", error);
+    }
+
+    try {
+        await loadTokens();
+    } catch (error) {
+        console.error("Token error:", error);
+    }
+
+    try {
+        await loadPayments();
+    } catch (error) {
+        console.error("Payment error:", error);
+    }
+
+    try {
+        await loadNotifications();
+    } catch (error) {
+        console.error("Notification error:", error);
+    }
 }
 
 
