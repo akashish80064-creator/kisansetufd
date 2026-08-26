@@ -423,3 +423,22 @@ document.addEventListener("click", event => {
 console.log(
     "KisanSetu Farmer Procurement Portal loaded successfully."
 );
+// Switch between Login and Registration forms
+const showRegisterBtn = document.getElementById("showRegister");
+const showLoginBtn = document.getElementById("showLogin");
+const loginForm = document.getElementById("loginForm");
+const registerForm = document.getElementById("registerForm");
+
+if (showRegisterBtn) {
+    showRegisterBtn.addEventListener("click", function () {
+        loginForm.classList.add("hidden");
+        registerForm.classList.remove("hidden");
+    });
+}
+
+if (showLoginBtn) {
+    showLoginBtn.addEventListener("click", function () {
+        registerForm.classList.add("hidden");
+        loginForm.classList.remove("hidden");
+    });
+}
