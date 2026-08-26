@@ -18,11 +18,21 @@ const JWT_SECRET =
 // MIDDLEWARE
 // =================================
 
-app.use(express.json());
+app.get("/", (req, res) => {
+    res.sendFile(path.join(__dirname, "index.html"));
+});
 
-app.use(express.static(
-    path.join(__dirname, "public")
-));
+app.get("/officer.html", (req, res) => {
+    res.sendFile(path.join(__dirname, "officer.html"));
+});
+
+app.get("/script.js", (req, res) => {
+    res.sendFile(path.join(__dirname, "script.js"));
+});
+
+app.get("/style.css", (req, res) => {
+    res.sendFile(path.join(__dirname, "style.css"));
+});
 
 
 // =================================
