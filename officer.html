@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>
+        KisanSetu Procurement Officer
+    </title>
+
+    <link
+        rel="stylesheet"
+        href="style.css"
+    >
+
+</head>
+
+
+<body>
+
+<div class="main" style="margin-left:0">
+
+
+<header class="topbar">
+
+    <strong>
+        🌾 KisanSetu Procurement Center
+    </strong>
+
+    <span id="officerName">
+        Officer
+    </span>
+
+</header>
+
+
+<section class="section" style="display:block">
+
+    <div class="page-title">
+
+        <div>
+
+            <span>
+                PROCUREMENT CENTER
+            </span>
+
+            <h1>
+                Today's Queue
+            </h1>
+
+            <p>
+                Manage farmers waiting for procurement.
+            </p>
+
+        </div>
+
+        <button
+            class="secondary-button"
+            onclick="loadQueue()"
+        >
+            ↻ Refresh Queue
+        </button>
+
+    </div>
+
+
+    <div
+        id="queue"
+    >
+        Loading...
+    </div>
+
+</section>
+
+
+</div>
+
+
+<script>
+
+let token =
+    localStorage.getItem(
+        "officerToken"
+    );
+
+
+async function api(
+    endpoint,
+    options = {}
+) {
+
+    const response =
+        await fetch(
+            "/api" + endpoint,
+            {
+                ...options,
+
+                headers: {
+                    "Content-Type":
+                        "application/json",
+
+                    Authorization:
+                        "Bearer " + token
+                }
+            }
+        );
+
+
+    const data =
+        await response.json();
+
+
+    if (!response.ok) {
+
+        throw new Error(
+            data.error
+        );
+
+    }
+
+
+    return data;
+
+}
+
+
+// ================================
+// LOGIN
+// ================================
+
+async function login() {
+
+    const phone =
+        prompt(
+            "Officer phone:",
+            "9999999999"
+        );
+
+
+    const password =
+        prompt(
+            "Officer password:",
+            "officer123"
+        );
+
+
+    try {
+
+        const data =
+            await api(
+                "/officer/login",
+                {
+                    method: "POST",
+
+                    body:
+                        JSON.stringify({
+                            phone,
+                            password
+                        })
+                }
+            );
+
+
+        token =
+            data.token;
+
+
+        localStorage.setItem(
+            "officerToken",
+            token
+        );
+
+
+        document.getElementById(
+            "officerName"
+        ).textContent =
+            data.officer.name;
+
+
+        loadQueue();
+
+    } catch (error) {
+
+        alert(error.message);
+
+    }
+
+}
+
+
+// ================================
+// QUEUE
+// ================================
+
+async function loadQueue() {
+
+    if (!token) {
+
+        await login();
+
+        return;
+
+    }
+
+
+    try {
+
+        const queue =
+            await api(
+                "/officer/queue"
+            );
+
+
+        const container =
+            document.getElementById(
+                "queue"
+            );
+
+
+        if (!queue.length) {
+
+            container.innerHTML = `
+                <div class="panel">
+                    No farmers are currently waiting.
+                </div>
+            `;
+
+            return;
+
+        }
+
+
+        container.innerHTML = queue
+            .map(
+                farmer => `
+
+                <div class="panel">
+
+                    <h2>
+                        Token #${farmer.token_number}
+                    </h2>
+
+                    <p>
+                        Farmer:
+                        <strong>
+                            ${farmer.name}
+                        </strong>
+                    </p>
+
+                    <p>
+                        Farmer ID:
+                        ${farmer.farmer_id}
+                    </p>
+
+                    <p>
+                        Phone:
+                        ${farmer.phone}
+                    </p>
+
+                    <p>
+                        Village:
+                        ${farmer.village}
+                    </p>
+
+                    <p>
+                        Crop:
+                        ${farmer.crop}
+                    </p>
+
+                    <p>
+                        Quantity:
+                        ${farmer.quantity} Quintals
+                    </p>
+
+                    <br>
+
+                    <strong>
+                        Status:
+                        ${farmer.status}
+                    </strong>
+
+                    <br><br>
+
+                    <button
+                        class="primary-button"
+                        onclick="updateToken(
+                            ${farmer.id},
+                            'ARRIVED'
+                        )"
+                    >
+                        Farmer Arrived
+                    </button>
+
+
+                    <button
+                        class="secondary-button"
+                        onclick="updateToken(
+                            ${farmer.id},
+                            'VERIFYING'
+                        )"
+                    >
+                        Verify Crop
+                    </button>
+
+
+                    <button
+                        class="primary-button"
+                        onclick="completeToken(
+                            ${farmer.id},
+                            ${farmer.quantity}
+                        )"
+                    >
+                        Complete Procurement
+                    </button>
+
+                </div>
+
+                `
+            )
+            .join("");
+
+    } catch (error) {
+
+        localStorage.removeItem(
+            "officerToken"
+        );
+
+        token = null;
+
+        await login();
+
+    }
+
+}
+
+
+// ================================
+// UPDATE
+// ================================
+
+async function updateToken(
+    id,
+    status
+) {
+
+    try {
+
+        await api(
+            `/officer/tokens/${id}`,
+            {
+                method: "PATCH",
+
+                body:
+                    JSON.stringify({
+                        status
+                    })
+            }
+        );
+
+
+        loadQueue();
+
+    } catch (error) {
+
+        alert(error.message);
+
+    }
+
+}
+
+
+// ================================
+// COMPLETE
+// ================================
+
+async function completeToken(
+    id,
+    quantity
+) {
+
+    const rate =
+        prompt(
+            "Procurement rate per Quintal:",
+            "2300"
+        );
+
+
+    if (!rate) {
+
+        return;
+
+    }
+
+
+    try {
+
+        await api(
+            `/officer/tokens/${id}`,
+            {
+                method: "PATCH",
+
+                body:
+                    JSON.stringify({
+                        status:
+                            "COMPLETED",
+
+                        verifiedQuantity:
+                            Number(
+                                quantity
+                            ),
+
+                        rate:
+                            Number(
+                                rate
+                            )
+                    })
+            }
+        );
+
+
+        alert(
+            "Procurement completed. Payment record created."
+        );
+
+
+        loadQueue();
+
+    } catch (error) {
+
+        alert(error.message);
+
+    }
+
+}
+
+
+loadQueue();
+
+</script>
+
+</body>
+
+</html>
