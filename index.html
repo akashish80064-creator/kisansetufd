@@ -18,7 +18,10 @@
       <label>Password</label><input id="loginPassword" type="password" placeholder="Your password" required>
       <p id="loginError" class="form-error"></p>
       <button class="primary-button auth-button" type="submit">Login to KisanSetu</button>
-      <p class="auth-switch">New farmer? <button type="button" id="showRegister" class="link-button">Create your account</button></p>
+      <p class="auth-switch">New farmer? <button type="button" class="link-button"
+onclick="document.getElementById('loginForm').classList.add('hidden'); document.getElementById('registerForm').classList.remove('hidden');">
+Create your account
+</button>
       <p class="auth-switch">Officer? <a href="/officer.html">Open Officer Portal</a></p>
     </form>
 
@@ -30,7 +33,10 @@
       <label>Password</label><input id="registerPassword" type="password" minlength="6" placeholder="Minimum 6 characters" required>
       <p id="registerError" class="form-error"></p>
       <button class="primary-button auth-button" type="submit">Create my account</button>
-      <p class="auth-switch">Already registered? <button type="button" id="showLogin" class="link-button">Log in</button></p>
+      <p class="auth-switch">Already registered? <button type="button" class="link-button"
+onclick="document.getElementById('registerForm').classList.add('hidden'); document.getElementById('loginForm').classList.remove('hidden');">
+Log in
+</button>
     </form>
   </div>
 </div>
