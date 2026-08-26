@@ -243,34 +243,28 @@ document
 
 async function showApplication() {
 
-    // Show dashboard immediately after successful login
+    // Show the main website immediately
     document.getElementById("loginPage").classList.add("hidden");
     document.getElementById("appPage").classList.remove("hidden");
 
     try {
-        // Load the logged-in farmer's profile
+        // Get the logged-in farmer
         farmer = await api("/farmer/profile");
 
-        document.getElementById("farmerName").textContent = farmer.name;
+        document.getElementById("farmerName").textContent =
+            farmer.name;
 
         document.querySelector("#dashboard h1").textContent =
             `Welcome, ${farmer.name}`;
 
     } catch (error) {
-
-        // Only return to login if authentication really fails
-        console.error("Profile loading error:", error);
-
-        alert(
-            "Login succeeded, but some profile data could not load. " +
-            "Please refresh the page."
-        );
-
+        console.error("Profile error:", error);
+        alert("Your login worked, but your profile could not be loaded: " + error.message);
         return;
     }
 
-    // Load other dashboard information separately.
-    // If one fails, the user remains logged in.
+    // Load dashboard sections separately.
+    // One failure will NOT log the user out.
     try {
         await loadSchedules();
     } catch (error) {
