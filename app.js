@@ -1,128 +1,193 @@
-const API = "/api";
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const path = require("path");
 
-let authToken =
-    localStorage.getItem("kisanToken");
+const db = require("./database");
 
-let farmer = null;
+const app = express();
 
-let myTokens = [];
+const JWT_SECRET =
+    process.env.JWT_SECRET ||
+    "kisansetu-change-this-secret";
 
+app.use(express.json());
 
-// ========================================
-// API HELPER
-// ========================================
-
-async function api(
-    endpoint,
-    options = {}
-) {
-
-    const headers = {
-        "Content-Type": "application/json",
-        ...(options.headers || {})
-    };
+app.use(
+    express.static(
+        path.join(__dirname, "public")
+    )
+);
 
 
-    if (authToken) {
+// ==========================================
+// AUTH MIDDLEWARE
+// ==========================================
 
-        headers.Authorization =
-            `Bearer ${authToken}`;
+function authenticate(req, res, next) {
 
+    const authorization =
+        req.headers.authorization;
+
+    if (!authorization) {
+        return res.status(401).json({
+            error: "Please login first"
+        });
     }
 
+    const parts =
+        authorization.split(" ");
 
-    const response =
-        await fetch(
-            API + endpoint,
-            {
-                ...options,
-                headers
-            }
-        );
+    const token =
+        parts[1];
 
-
-    const data =
-        await response.json();
-
-
-    if (!response.ok) {
-
-        throw new Error(
-            data.error ||
-            "Something went wrong"
-        );
-
+    if (!token) {
+        return res.status(401).json({
+            error: "Invalid login token"
+        });
     }
 
+    try {
 
-    return data;
+        const decoded =
+            jwt.verify(
+                token,
+                JWT_SECRET
+            );
+
+        req.user = decoded;
+
+        next();
+
+    } catch (error) {
+
+        return res.status(401).json({
+            error: "Your login session has expired"
+        });
+
+    }
 }
 
 
-// ========================================
-// LOGIN
-// ========================================
+// ==========================================
+// REGISTER FARMER
+// ==========================================
 
-const loginForm =
-    document.getElementById("loginForm");
-
-
-loginForm.addEventListener(
-    "submit",
-    async event => {
-
-        event.preventDefault();
-
-
-        const phone =
-            document.getElementById(
-                "loginPhone"
-            ).value;
-
-
-        const password =
-            document.getElementById(
-                "loginPassword"
-            ).value;
-
+app.post(
+    "/api/farmer/register",
+    async (req, res) => {
 
         try {
 
-            const data =
-                await api(
-                    "/farmer/login",
-                    {
-                        method: "POST",
+            const {
+                name,
+                phone,
+                village,
+                password
+            } = req.body;
 
-                        body: JSON.stringify({
-                            phone,
-                            password
-                        })
+            if (
+                !name ||
+                !phone ||
+                !village ||
+                !password
+            ) {
+                return res.status(400).json({
+                    error:
+                        "Please fill all fields"
+                });
+            }
+
+            if (!/^[0-9]{10}$/.test(phone)) {
+
+                return res.status(400).json({
+                    error:
+                        "Phone number must contain 10 digits"
+                });
+
+            }
+
+            if (password.length < 6) {
+
+                return res.status(400).json({
+                    error:
+                        "Password must contain at least 6 characters"
+                });
+
+            }
+
+            const existing =
+                db.prepare(`
+                    SELECT id
+                    FROM farmers
+                    WHERE phone = ?
+                `).get(phone);
+
+            if (existing) {
+
+                return res.status(400).json({
+                    error:
+                        "An account already exists with this phone number"
+                });
+
+            }
+
+            const hashedPassword =
+                await bcrypt.hash(
+                    password,
+                    10
+                );
+
+            const result =
+                db.prepare(`
+                    INSERT INTO farmers
+                    (name, phone, village, password)
+                    VALUES (?, ?, ?, ?)
+                `).run(
+                    name,
+                    phone,
+                    village,
+                    hashedPassword
+                );
+
+            const farmer = {
+                id:
+                    result.lastInsertRowid,
+                name,
+                phone,
+                village
+            };
+
+            const token =
+                jwt.sign(
+                    {
+                        id: farmer.id,
+                        type: "farmer"
+                    },
+                    JWT_SECRET,
+                    {
+                        expiresIn: "7d"
                     }
                 );
 
-
-            authToken =
-                data.token;
-
-            farmer =
-                data.farmer;
-
-
-            localStorage.setItem(
-                "kisanToken",
-                authToken
-            );
-
-
-            showApplication();
+            res.json({
+                message:
+                    "Account created successfully",
+                token,
+                farmer
+            });
 
         } catch (error) {
 
-            document.getElementById(
-                "loginError"
-            ).textContent =
-                error.message;
+            console.error(
+                "Register error:",
+                error
+            );
+
+            res.status(500).json({
+                error:
+                    "Could not create account"
+            });
 
         }
 
@@ -130,66 +195,103 @@ loginForm.addEventListener(
 );
 
 
-// ========================================
-// REGISTRATION
-// ========================================
+// ==========================================
+// FARMER LOGIN
+// ==========================================
 
-const registerForm =
-    document.getElementById("registerForm");
-
-registerForm.addEventListener(
-    "submit",
-    async event => {
-
-        event.preventDefault();
-
-        const name =
-            document.getElementById("registerName").value.trim();
-
-        const phone =
-            document.getElementById("registerPhone").value.trim();
-
-        const village =
-            document.getElementById("registerVillage").value.trim();
-
-        const password =
-            document.getElementById("registerPassword").value;
-
-        const errorBox =
-            document.getElementById("registerError");
-
-        errorBox.textContent = "";
+app.post(
+    "/api/farmer/login",
+    async (req, res) => {
 
         try {
 
-            const data =
-                await api(
-                    "/farmer/register",
+            const {
+                phone,
+                password
+            } = req.body;
+
+            if (
+                !phone ||
+                !password
+            ) {
+
+                return res.status(400).json({
+                    error:
+                        "Phone number and password are required"
+                });
+
+            }
+
+            const farmer =
+                db.prepare(`
+                    SELECT *
+                    FROM farmers
+                    WHERE phone = ?
+                `).get(phone);
+
+            if (!farmer) {
+
+                return res.status(401).json({
+                    error:
+                        "Invalid phone number or password"
+                });
+
+            }
+
+            const passwordCorrect =
+                await bcrypt.compare(
+                    password,
+                    farmer.password
+                );
+
+            if (!passwordCorrect) {
+
+                return res.status(401).json({
+                    error:
+                        "Invalid phone number or password"
+                });
+
+            }
+
+            const token =
+                jwt.sign(
                     {
-                        method: "POST",
-                        body: JSON.stringify({
-                            name,
-                            phone,
-                            village,
-                            password
-                        })
+                        id: farmer.id,
+                        type: "farmer"
+                    },
+                    JWT_SECRET,
+                    {
+                        expiresIn: "7d"
                     }
                 );
 
-            authToken = data.token;
-            farmer = data.farmer;
+            res.json({
 
-            localStorage.setItem(
-                "kisanToken",
-                authToken
-            );
+                message:
+                    "Login successful",
 
-            showApplication();
+                token,
+
+                farmer: {
+                    id: farmer.id,
+                    name: farmer.name,
+                    phone: farmer.phone,
+                    village: farmer.village
+                }
+
+            });
 
         } catch (error) {
 
-            errorBox.textContent =
-                error.message;
+            console.error(
+                "Login error:",
+                error
+            );
+
+            res.status(500).json({
+                error:
+                    "Login failed"
+            });
 
         }
 
@@ -197,784 +299,333 @@ registerForm.addEventListener(
 );
 
 
-// ========================================
-// LOGIN / REGISTER VIEW
-// ========================================
+// ==========================================
+// FARMER PROFILE
+// ==========================================
 
-document
-    .getElementById("showRegister")
-    .addEventListener(
-        "click",
-        () => {
+app.get(
+    "/api/farmer/profile",
+    authenticate,
+    (req, res) => {
 
-            document
-                .getElementById("loginForm")
-                .classList.add("hidden");
+        const farmer =
+            db.prepare(`
+                SELECT
+                    id,
+                    name,
+                    phone,
+                    village,
+                    created_at
+                FROM farmers
+                WHERE id = ?
+            `).get(req.user.id);
 
-            document
-                .getElementById("registerForm")
-                .classList.remove("hidden");
+        if (!farmer) {
 
-        }
-    );
-
-
-document
-    .getElementById("showLogin")
-    .addEventListener(
-        "click",
-        () => {
-
-            document
-                .getElementById("registerForm")
-                .classList.add("hidden");
-
-            document
-                .getElementById("loginForm")
-                .classList.remove("hidden");
+            return res.status(404).json({
+                error:
+                    "Farmer not found"
+            });
 
         }
-    );
 
-
-// ========================================
-// SHOW APP
-// ========================================
-
-async function showApplication() {
-
-    // Show the main website immediately
-    document.getElementById("loginPage").classList.add("hidden");
-    document.getElementById("appPage").classList.remove("hidden");
-
-    try {
-        // Get the logged-in farmer
-        farmer = await api("/farmer/profile");
-
-        document.getElementById("farmerName").textContent =
-            farmer.name;
-
-        document.querySelector("#dashboard h1").textContent =
-            `Welcome, ${farmer.name}`;
-
-    } catch (error) {
-        console.error("Profile error:", error);
-        alert("Your login worked, but your profile could not be loaded: " + error.message);
-        return;
-    }
-
-    // Load dashboard sections separately.
-    // One failure will NOT log the user out.
-    try {
-        await loadSchedules();
-    } catch (error) {
-        console.error("Schedule error:", error);
-    }
-
-    try {
-        await loadTokens();
-    } catch (error) {
-        console.error("Token error:", error);
-    }
-
-    try {
-        await loadPayments();
-    } catch (error) {
-        console.error("Payment error:", error);
-    }
-
-    try {
-        await loadNotifications();
-    } catch (error) {
-        console.error("Notification error:", error);
-    }
-}
-
-
-// ========================================
-// NAVIGATION
-// ========================================
-
-document
-    .querySelectorAll(".nav-button")
-    .forEach(button => {
-
-        button.addEventListener(
-            "click",
-            () => {
-
-                const section =
-                    button.dataset.section;
-
-
-                showSection(section);
-
-            }
-        );
-
-    });
-
-
-document
-    .querySelectorAll("[data-go]")
-    .forEach(button => {
-
-        button.addEventListener(
-            "click",
-            () => {
-
-                showSection(
-                    button.dataset.go
-                );
-
-            }
-        );
-
-    });
-
-
-function showSection(section) {
-
-    document
-        .querySelectorAll(".section")
-        .forEach(item => {
-
-            item.classList.remove("active");
-
-        });
-
-
-    document
-        .getElementById(section)
-        .classList.add("active");
-
-
-    document
-        .querySelectorAll(".nav-button")
-        .forEach(button => {
-
-            button.classList.toggle(
-                "active",
-                button.dataset.section === section
-            );
-
-        });
-
-
-    if (section === "queue") {
-
-        loadQueue();
+        res.json(farmer);
 
     }
+);
 
-    if (section === "status") {
 
-        loadTokens();
+// ==========================================
+// SCHEDULES
+// ==========================================
+
+app.get(
+    "/api/schedules",
+    authenticate,
+    (req, res) => {
+
+        const schedules =
+            db.prepare(`
+                SELECT *
+                FROM schedules
+                ORDER BY date ASC
+            `).all();
+
+        res.json(schedules);
 
     }
-
-}
-
-
-// ========================================
-// LOAD SCHEDULES
-// ========================================
-
-async function loadSchedules() {
-
-    const schedules =
-        await api(
-            "/schedules"
-        );
+);
 
 
-    const list =
-        document.getElementById(
-            "scheduleList"
-        );
-
-
-    const select =
-        document.getElementById(
-            "scheduleId"
-        );
-
-
-    list.innerHTML = "";
-
-    select.innerHTML =
-        `<option value="">
-            Select schedule
-        </option>`;
-
-
-    schedules.forEach(schedule => {
-
-        const item =
-            document.createElement(
-                "div"
-            );
-
-
-        item.className =
-            "schedule-item";
-
-
-        item.innerHTML = `
-
-            <h2>
-                ${schedule.crop}
-            </h2>
-
-            <p>
-                📅 ${schedule.date}
-            </p>
-
-            <p>
-                🕐 ${schedule.start_time}
-                - ${schedule.end_time}
-            </p>
-
-            <p>
-                📍 ${schedule.center}
-            </p>
-
-            <p>
-                🎟️ ${schedule.available_slots}
-                slots available
-            </p>
-
-        `;
-
-
-        list.appendChild(item);
-
-
-        const option =
-            document.createElement(
-                "option"
-            );
-
-
-        option.value =
-            schedule.id;
-
-
-        option.textContent =
-            `${schedule.crop} - ${schedule.date}
-             (${schedule.available_slots} slots)`;
-
-
-        select.appendChild(option);
-
-    });
-
-}
-
-
-// ========================================
+// ==========================================
 // BOOK TOKEN
-// ========================================
+// ==========================================
 
-document
-    .getElementById("bookingForm")
-    .addEventListener(
-        "submit",
-        async event => {
+app.post(
+    "/api/tokens",
+    authenticate,
+    (req, res) => {
 
-            event.preventDefault();
+        try {
 
+            const {
+                scheduleId,
+                quantity
+            } = req.body;
 
-            const crop =
-                document.getElementById(
-                    "crop"
-                ).value;
+            if (
+                !scheduleId ||
+                !quantity
+            ) {
 
-
-            const quantity =
-                document.getElementById(
-                    "quantity"
-                ).value;
-
-
-            const scheduleId =
-                document.getElementById(
-                    "scheduleId"
-                ).value;
-
-
-            try {
-
-                const result =
-                    await api(
-                        "/tokens",
-                        {
-                            method: "POST",
-
-                            body:
-                                JSON.stringify({
-                                    crop,
-                                    quantity:
-                                        Number(
-                                            quantity
-                                        ),
-                                    scheduleId:
-                                        Number(
-                                            scheduleId
-                                        )
-                                })
-                        }
-                    );
-
-
-                const resultBox =
-                    document.getElementById(
-                        "bookingResult"
-                    );
-
-
-                resultBox.innerHTML = `
-
-                    🎉 Token booked successfully!
-
-                    <br><br>
-
-                    Your Token Number:
-
-                    <strong>
-                        #${result.tokenNumber}
-                    </strong>
-
-                    <br><br>
-
-                    Please arrive at the procurement
-                    center according to your schedule.
-
-                `;
-
-
-                resultBox.classList.remove(
-                    "hidden"
-                );
-
-
-                await loadTokens();
-
-                await loadSchedules();
-
-            } catch (error) {
-
-                alert(error.message);
+                return res.status(400).json({
+                    error:
+                        "Please select schedule and quantity"
+                });
 
             }
 
+            const schedule =
+                db.prepare(`
+                    SELECT *
+                    FROM schedules
+                    WHERE id = ?
+                `).get(scheduleId);
+
+            if (!schedule) {
+
+                return res.status(404).json({
+                    error:
+                        "Schedule not found"
+                });
+
+            }
+
+            if (
+                schedule.available_slots <= 0
+            ) {
+
+                return res.status(400).json({
+                    error:
+                        "No slots available"
+                });
+
+            }
+
+            const tokenNumber =
+                "KS-" +
+                Date.now()
+                    .toString()
+                    .slice(-6);
+
+            const result =
+                db.prepare(`
+                    INSERT INTO tokens
+                    (
+                        farmer_id,
+                        schedule_id,
+                        token_number,
+                        crop,
+                        quantity,
+                        status
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `).run(
+                    req.user.id,
+                    scheduleId,
+                    tokenNumber,
+                    schedule.crop,
+                    quantity,
+                    "Booked"
+                );
+
+            db.prepare(`
+                UPDATE schedules
+                SET available_slots =
+                    available_slots - 1
+                WHERE id = ?
+            `).run(scheduleId);
+
+            res.json({
+
+                message:
+                    "Token booked successfully",
+
+                token: {
+
+                    id:
+                        result.lastInsertRowid,
+
+                    token_number:
+                        tokenNumber,
+
+                    crop:
+                        schedule.crop,
+
+                    quantity,
+
+                    status:
+                        "Booked"
+
+                }
+
+            });
+
+        } catch (error) {
+
+            console.error(
+                "Token error:",
+                error
+            );
+
+            res.status(500).json({
+                error:
+                    "Could not book token"
+            });
+
         }
-    );
-
-
-// ========================================
-// LOAD TOKENS
-// ========================================
-
-async function loadTokens() {
-
-    myTokens =
-        await api(
-            "/tokens/my"
-        );
-
-
-    if (!myTokens.length) {
-
-        document.getElementById(
-            "currentProcurement"
-        ).innerHTML =
-            "You have not booked a procurement token yet.";
-
-        return;
 
     }
+);
 
 
-    const latest =
-        myTokens[0];
+// ==========================================
+// GET MY TOKENS
+// ==========================================
 
+app.get(
+    "/api/tokens",
+    authenticate,
+    (req, res) => {
 
-    document.getElementById(
-        "dashCrop"
-    ).textContent =
-        latest.crop;
+        const tokens =
+            db.prepare(`
+                SELECT *
+                FROM tokens
+                WHERE farmer_id = ?
+                ORDER BY id DESC
+            `).all(req.user.id);
 
-
-    document.getElementById(
-        "dashToken"
-    ).textContent =
-        "#" + latest.token_number;
-
-
-    document.getElementById(
-        "currentProcurement"
-    ).innerHTML = `
-
-        <p>
-            <strong>
-                Token #${latest.token_number}
-            </strong>
-        </p>
-
-        <p>
-            Crop: ${latest.crop}
-        </p>
-
-        <p>
-            Quantity: ${latest.quantity} Quintals
-        </p>
-
-        <p>
-            Date: ${latest.date}
-        </p>
-
-        <p>
-            Center: ${latest.center}
-        </p>
-
-        <br>
-
-        <span class="status-badge">
-            ${latest.procurement_status}
-        </span>
-
-    `;
-
-
-    renderStatus();
-
-}
-
-
-// ========================================
-// QUEUE
-// ========================================
-
-async function loadQueue() {
-
-    if (!myTokens.length) {
-
-        return;
+        res.json(tokens);
 
     }
+);
 
 
-    const latest =
-        myTokens[0];
+// ==========================================
+// PAYMENTS
+// ==========================================
 
+app.get(
+    "/api/payments",
+    authenticate,
+    (req, res) => {
 
-    try {
+        const payments =
+            db.prepare(`
+                SELECT *
+                FROM payments
+                WHERE farmer_id = ?
+                ORDER BY id DESC
+            `).all(req.user.id);
 
-        const queue =
-            await api(
-                `/queue/${latest.id}`
-            );
-
-
-        document.getElementById(
-            "queueToken"
-        ).textContent =
-            "#" + queue.yourToken;
-
-
-        document.getElementById(
-            "currentToken"
-        ).textContent =
-            "#" + queue.currentToken;
-
-
-        document.getElementById(
-            "queueAhead"
-        ).textContent =
-            queue.farmersAhead;
-
-
-        document.getElementById(
-            "queueTime"
-        ).textContent =
-            queue.estimatedMinutes +
-            " min";
-
-
-        document.getElementById(
-            "dashAhead"
-        ).textContent =
-            queue.farmersAhead;
-
-    } catch {
-
-        document.getElementById(
-            "queueAhead"
-        ).textContent =
-            "—";
+        res.json(payments);
 
     }
-
-}
-
-
-document
-    .getElementById("refreshQueue")
-    .addEventListener(
-        "click",
-        loadQueue
-    );
+);
 
 
-// ========================================
-// STATUS
-// ========================================
-
-function renderStatus() {
-
-    const container =
-        document.getElementById(
-            "statusList"
-        );
-
-
-    container.innerHTML = "";
-
-
-    myTokens.forEach(token => {
-
-        const item =
-            document.createElement(
-                "div"
-            );
-
-
-        item.className =
-            "status-item";
-
-
-        item.innerHTML = `
-
-            <h2>
-                Token #${token.token_number}
-            </h2>
-
-            <p>
-                Crop:
-                <strong>
-                    ${token.crop}
-                </strong>
-            </p>
-
-            <p>
-                Quantity:
-                ${token.quantity} Quintals
-            </p>
-
-            <br>
-
-            <span class="status-badge">
-                ${token.procurement_status}
-            </span>
-
-        `;
-
-
-        container.appendChild(item);
-
-    });
-
-}
-
-
-// ========================================
-// PAYMENT
-// ========================================
-
-async function loadPayments() {
-
-    const payments =
-        await api(
-            "/payments"
-        );
-
-
-    const container =
-        document.getElementById(
-            "paymentList"
-        );
-
-
-    container.innerHTML = "";
-
-
-    if (!payments.length) {
-
-        container.innerHTML =
-            `<div class="panel">
-                No payment records yet.
-             </div>`;
-
-        document.getElementById(
-            "dashPayment"
-        ).textContent =
-            "No payment";
-
-        return;
-
-    }
-
-
-    payments.forEach(payment => {
-
-        const item =
-            document.createElement(
-                "div"
-            );
-
-
-        item.className =
-            "payment-item";
-
-
-        item.innerHTML = `
-
-            <p>
-                Token #${payment.token_number}
-            </p>
-
-            <div class="payment-amount">
-                ₹${Number(
-                    payment.amount
-                ).toLocaleString("en-IN")}
-            </div>
-
-            <p>
-                ${payment.crop}
-                -
-                ${payment.quantity}
-                Quintals
-            </p>
-
-            <br>
-
-            <span class="status-badge">
-                ${payment.status}
-            </span>
-
-        `;
-
-
-        container.appendChild(item);
-
-    });
-
-
-    document.getElementById(
-        "dashPayment"
-    ).textContent =
-        "₹" +
-        Number(
-            payments[0].amount
-        ).toLocaleString("en-IN");
-
-}
-
-
-// ========================================
+// ==========================================
 // NOTIFICATIONS
-// ========================================
+// ==========================================
 
-async function loadNotifications() {
+app.get(
+    "/api/notifications",
+    authenticate,
+    (req, res) => {
 
-    const notifications =
-        await api(
-            "/notifications"
+        res.json([
+            {
+                title:
+                    "Welcome to KisanSetu",
+                message:
+                    "Your farmer account is active."
+            },
+            {
+                title:
+                    "Procurement Schedules",
+                message:
+                    "Check available schedules and book your token."
+            }
+        ]);
+
+    }
+);
+
+
+// ==========================================
+// QUEUE
+// ==========================================
+
+app.get(
+    "/api/queue",
+    authenticate,
+    (req, res) => {
+
+        const count =
+            db.prepare(`
+                SELECT COUNT(*) AS count
+                FROM tokens
+                WHERE status = 'Booked'
+            `).get();
+
+        res.json({
+            peopleWaiting:
+                count.count,
+            message:
+                "Live procurement queue"
+        });
+
+    }
+);
+
+
+// ==========================================
+// HEALTH CHECK
+// ==========================================
+
+app.get(
+    "/api/health",
+    (req, res) => {
+
+        res.json({
+            status: "online",
+            service:
+                "KisanSetu API"
+        });
+
+    }
+);
+
+
+// ==========================================
+// FRONTEND FALLBACK
+// ==========================================
+
+app.get(
+    "*",
+    (req, res) => {
+
+        res.sendFile(
+            path.join(
+                __dirname,
+                "public",
+                "index.html"
+            )
         );
 
-
-    const container =
-        document.getElementById(
-            "notificationList"
-        );
+    }
+);
 
 
-    container.innerHTML = "";
-
-
-    notifications.forEach(notification => {
-
-        const item =
-            document.createElement(
-                "div"
-            );
-
-
-        item.className =
-            "notification";
-
-
-        item.innerHTML = `
-
-            <h3>
-                🔔 ${notification.title}
-            </h3>
-
-            <p>
-                ${notification.message}
-            </p>
-
-        `;
-
-
-        container.appendChild(item);
-
-    });
-
-}
-
-
-// ========================================
-// LOGOUT
-// ========================================
-
-document
-    .getElementById("logoutButton")
-    .addEventListener(
-        "click",
-        logout
-    );
-
-
-function logout() {
-
-    localStorage.removeItem(
-        "kisanToken"
-    );
-
-
-    authToken = null;
-
-
-    document
-        .getElementById("appPage")
-        .classList.add("hidden");
-
-
-    document
-        .getElementById("loginPage")
-        .classList.remove("hidden");
-
-}
-
-
-// ========================================
-// START
-// ========================================
-
-if (authToken) {
-
-    showApplication();
-
-}
+module.exports = app;
